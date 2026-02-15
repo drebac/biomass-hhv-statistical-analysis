@@ -46,7 +46,7 @@ The dataset must contain the following columns:
 The analysis is fully reproducible and intended for academic and scientific use.
 
 ## Author
-
+Dragan Rebac
 Diploma thesis work  
 Faculty of Agriculture  
 University-level academic research
