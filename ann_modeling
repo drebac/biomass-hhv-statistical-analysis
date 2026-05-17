@@ -1,0 +1,176 @@
+# =====================================================
+# ARTIFICIAL NEURAL NETWORK (ANN) MODEL
+# Prediction of Higher Heating Value (HHV) of Biomass
+# =====================================================
+# Model type: MLP feed-forward ANN
+# Hidden layer: 17 neurons
+# Activation function: tanh (hidden), linear (output)
+# Optimizer: Adam
+# Input data: Ultimate analysis + biomass category
+# =====================================================
+
+import pandas as pd
+import numpy as np
+import time
+import matplotlib.pyplot as plt
+import warnings
+
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+
+from google.colab import files
+
+warnings.filterwarnings("ignore")
+
+# =====================================================
+# PERFORMANCE METRICS
+# =====================================================
+
+def regression_metrics(y_true, y_pred):
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mae  = mean_absolute_error(y_true, y_pred)
+    r2   = r2_score(y_true, y_pred)
+    mape = np.mean(np.abs((y_true - y_pred) / np.clip(y_true, 1e-6, None))) * 100
+    bias = np.mean(y_pred - y_true)
+    return r2, rmse, mae, mape, bias
+
+# =====================================================
+# DATA LOADING FUNCTION
+# =====================================================
+
+def load_dataset(label):
+    print(f"\nUpload {label} dataset:")
+    uploaded = files.upload()
+    file_name = list(uploaded.keys())[0]
+
+    df = pd.read_excel(file_name)
+    df.columns = df.columns.str.strip().str.upper()
+
+    X = df[
+        ['C','H','N','S','O',
+         'KATEGORIJA OTPAD',
+         'KATEGORIJA SLAMA',
+         'KATEGORIJA STABLJIKA']
+    ]
+
+    y = df['HHV']
+    return X, y
+
+# =====================================================
+# LOAD TRAIN / VALIDATION / TEST DATASETS
+# =====================================================
+
+X_train, y_train = load_dataset("TRAIN")
+X_val,   y_val   = load_dataset("VALIDATION")
+X_test,  y_test  = load_dataset("TEST")
+
+# =====================================================
+# ANN TRAINING WITH MULTIPLE INITIALIZATIONS
+# =====================================================
+
+best_model = None
+best_val_r2 = -np.inf
+
+print("\nTraining ANN models...")
+start_time = time.time()
+
+for seed in range(20):
+    model = Pipeline([
+        ("scaler", StandardScaler()),
+        ("ann", MLPRegressor(
+            hidden_layer_sizes=(17,),
+            activation="tanh",
+            solver="adam",
+            alpha=0.003,
+            batch_size=64,
+            learning_rate="adaptive",
+            max_iter=9000,
+            tol=5e-5,
+            shuffle=True,
+            random_state=seed
+        ))
+    ])
+
+    model.fit(X_train, y_train)
+    val_r2 = r2_score(y_val, model.predict(X_val))
+
+    if val_r2 > best_val_r2:
+        best_val_r2 = val_r2
+        best_model = model
+
+training_time = time.time() - start_time
+
+print(f"Best validation R²: {best_val_r2:.4f}")
+print(f"Training time: {training_time:.2f} s")
+
+# =====================================================
+# MODEL PREDICTIONS
+# =====================================================
+
+y_train_pred = best_model.predict(X_train)
+y_val_pred   = best_model.predict(X_val)
+y_test_pred  = best_model.predict(X_test)
+
+# =====================================================
+# PERFORMANCE EVALUATION
+# =====================================================
+
+train_m = regression_metrics(y_train, y_train_pred)
+val_m   = regression_metrics(y_val, y_val_pred)
+test_m  = regression_metrics(y_test, y_test_pred)
+
+results_df = pd.DataFrame({
+    "Dataset": ["TRAIN", "VALIDATION", "TEST"],
+    "R²":      [train_m[0], val_m[0], test_m[0]],
+    "RMSE":    [train_m[1], val_m[1], test_m[1]],
+    "MAE":     [train_m[2], val_m[2], test_m[2]],
+    "MAPE (%)":[train_m[3], val_m[3], test_m[3]],
+    "Bias":    [train_m[4], val_m[4], test_m[4]]
+})
+
+print("\nANN PERFORMANCE SUMMARY")
+print(results_df.round(4))
+
+# =====================================================
+# OVERALL MODEL PERFORMANCE
+# =====================================================
+
+y_all_true = np.concatenate([y_train, y_val, y_test])
+y_all_pred = np.concatenate([y_train_pred, y_val_pred, y_test_pred])
+
+overall_m = regression_metrics(y_all_true, y_all_pred)
+
+print("\nOVERALL PERFORMANCE (ALL DATA)")
+print(f"R²   = {overall_m[0]:.4f}")
+print(f"RMSE = {overall_m[1]:.3f} MJ/kg")
+print(f"MAE  = {overall_m[2]:.3f} MJ/kg")
+print(f"MAPE = {overall_m[3]:.2f} %")
+print(f"Bias = {overall_m[4]:.3f} MJ/kg")
+
+# =====================================================
+# PREDICTED vs MEASURED PLOTS
+# =====================================================
+
+plt.figure(figsize=(15,4))
+
+datasets = [
+    (y_train, y_train_pred, "TRENING"),
+    (y_val,   y_val_pred,   "VALIDACIJA"),
+    (y_test,  y_test_pred,  "TEST")
+]
+
+for i, (y_true, y_pred, title) in enumerate(datasets, 1):
+    plt.subplot(1, 3, i)
+    plt.scatter(y_true, y_pred, alpha=0.7, edgecolors="k")
+    plt.plot([y_true.min(), y_true.max()],
+             [y_true.min(), y_true.max()],
+             "r--")
+    plt.xlabel("Izmjerena GOV (MJ/kg)")
+    plt.ylabel("Predviđena GOV (MJ/kg)")
+    plt.title(f"{title} (R² = {r2_score(y_true, y_pred):.3f})")
+    plt.grid(True)
+
+plt.tight_layout()
+plt.show()
